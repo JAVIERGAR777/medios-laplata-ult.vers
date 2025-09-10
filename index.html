@@ -403,6 +403,15 @@
             z-index: 3;
             box-shadow: 0 2px 5px rgba(0,0,0,0.2);
         }
+        
+        .no-data-message {
+            text-align: center;
+            color: white;
+            padding: 20px;
+            background-color: #34495e;
+            border-radius: 4px;
+            margin-top: 20px;
+        }
     </style>
 </head>
 <body>
@@ -419,7 +428,6 @@
             <div class="filters">
                 <div class="filter-title">Filtros</div>
                 
-                <!-- Filtro de fecha compacto -->
                 <div class="date-filter-compact">
                     <div class="date-filter-title">Filtro de fecha</div>
                     <div class="date-inputs">
@@ -437,7 +445,7 @@
                 <div class="filter-group">
                     <label>Tipologías:</label>
                     <div class="select-all">
-                        <input type="checkbox" id="selectAllCategories" checked>
+                        <input type="checkbox" id="selectAllCategories">
                         <label for="selectAllCategories">Seleccionar todas</label>
                     </div>
                     <div class="categories-container" id="categoriesContainer">
@@ -453,6 +461,10 @@
             <div class="markers-count">
                 <p>Marcadores visibles: <span id="visibleMarkers">0</span></p>
                 <p>Total de marcadores: <span id="totalMarkers">0</span></p>
+            </div>
+            
+            <div id="noDataMessage" class="no-data-message" style="display: none;">
+                <p>Selecciona al menos una categoría y establece un rango de fechas para ver los eventos.</p>
             </div>
         </div>
     </div>
@@ -480,6 +492,7 @@
         let allData = [];
         let tipologias = new Set();
         let categoryColors = {};
+        let filtersApplied = false;
         
         const colorPalette = [
             '#e74c3c', '#3498db', '#2ecc71', '#f39c12', '#9b59b6', 
@@ -504,10 +517,11 @@
         const selectAllCategories = document.getElementById('selectAllCategories');
         const applyFilters = document.getElementById('applyFilters');
         const resetFilters = document.getElementById('resetFilters');
+        const noDataMessage = document.getElementById('noDataMessage');
         
         const SHEETBEST_URL = 'https://api.sheetbest.com/sheets/63d0e8d5-5d04-468f-baea-a951c8d5c55a';
         
-        setDefaultDates();
+        clearDefaultDates();
         
         loadMarkers();
         
@@ -533,22 +547,25 @@
         });
         
         applyFilters.addEventListener('click', () => {
+            filtersApplied = true;
             applyFiltersToMarkers();
         });
         
         resetFilters.addEventListener('click', () => {
-            const today = new Date();
-            const formattedToday = formatDate(today);
-            startDate.value = formattedToday;
-            endDate.value = formattedToday;
+            clearDefaultDates();
             
             const checkboxes = categoriesContainer.querySelectorAll('input[type="checkbox"]');
             checkboxes.forEach(checkbox => {
-                checkbox.checked = true;
+                checkbox.checked = false;
             });
-            selectAllCategories.checked = true;
+            selectAllCategories.checked = false;
             
-            applyFiltersToMarkers();
+            allMarkers.forEach(marker => {
+                map.removeLayer(marker);
+            });
+            
+            visibleMarkers.textContent = 0;
+            noDataMessage.style.display = 'block';
         });
         
         selectAllCategories.addEventListener('change', () => {
@@ -556,7 +573,6 @@
             checkboxes.forEach(checkbox => {
                 checkbox.checked = selectAllCategories.checked;
             });
-            applyFiltersToMarkers();
         });
         
         map.on('click', (e) => {
@@ -601,12 +617,9 @@
             return `${year}-${month}-${day}`;
         }
         
-        function setDefaultDates() {
-            const today = new Date();
-            const formattedToday = formatDate(today);
-            
-            startDate.value = formattedToday;
-            endDate.value = formattedToday;
+        function clearDefaultDates() {
+            startDate.value = '';
+            endDate.value = '';
         }
         
         function createParteContent(data) {
@@ -787,6 +800,20 @@
             const end = endDate.value ? new Date(endDate.value) : null;
             const selectedCategories = getSelectedCategories();
             
+            if (selectedCategories.length === 0) {
+                noDataMessage.style.display = 'block';
+                noDataMessage.innerHTML = '<p>Debes seleccionar al menos una categoría.</p>';
+                return;
+            }
+            
+            if (!startDate.value || !endDate.value) {
+                noDataMessage.style.display = 'block';
+                noDataMessage.innerHTML = '<p>Debes establecer un rango de fechas.</p>';
+                return;
+            }
+            
+            noDataMessage.style.display = 'none';
+            
             let visibleCount = 0;
             
             allMarkers.forEach((marker, index) => {
@@ -807,6 +834,8 @@
                                 show = false;
                             }
                         }
+                    } else {
+                        show = false;
                     }
                 }
                 
@@ -826,6 +855,13 @@
             });
             
             visibleMarkers.textContent = visibleCount;
+            
+            if (visibleCount === 0) {
+                noDataMessage.style.display = 'block';
+                noDataMessage.innerHTML = '<p>No hay eventos que coincidan con los filtros seleccionados.</p>';
+            } else {
+                noDataMessage.style.display = 'none';
+            }
         }
         
         function assignCategoryColors(categories) {
@@ -880,8 +916,12 @@
                         checkbox.type = 'checkbox';
                         checkbox.id = `category-${tipologia.replace(/\s+/g, '-')}`;
                         checkbox.value = tipologia;
-                        checkbox.checked = true;
-                        checkbox.addEventListener('change', applyFiltersToMarkers);
+                        checkbox.checked = false; 
+                        checkbox.addEventListener('change', function() {
+                            const allChecked = Array.from(categoriesContainer.querySelectorAll('input[type="checkbox"]'))
+                                .every(cb => cb.checked);
+                            selectAllCategories.checked = allChecked;
+                        });
                         
                         const label = document.createElement('label');
                         label.htmlFor = `category-${tipologia.replace(/\s+/g, '-')}`;
@@ -917,11 +957,13 @@
                     });
                     
                     totalMarkers.textContent = count;
-                    visibleMarkers.textContent = count;
+                    visibleMarkers.textContent = 0;
                     
                     allMarkers.forEach(marker => {
-                        map.addLayer(marker);
+                        map.removeLayer(marker);
                     });
+                    
+                    noDataMessage.style.display = 'block';
                     
                     if (allMarkers.length > 0) {
                         const group = new L.featureGroup(allMarkers);
@@ -935,9 +977,17 @@
                 });
         }
         
-        startDate.addEventListener('change', applyFiltersToMarkers);
-        endDate.addEventListener('change', applyFiltersToMarkers);
+        startDate.addEventListener('change', function() {
+            if (filtersApplied) {
+                applyFiltersToMarkers();
+            }
+        });
+        
+        endDate.addEventListener('change', function() {
+            if (filtersApplied) {
+                applyFiltersToMarkers();
+            }
+        });
     </script>
 </body>
-
 </html>
